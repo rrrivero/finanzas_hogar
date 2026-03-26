@@ -3,8 +3,9 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 
-st.write("VERSION LIMPIA FUNCIONANDO ✅")
+st.title("Finanzas del Hogar")
 
+# CONEXIÓN BD
 conn = sqlite3.connect("database.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -33,17 +34,18 @@ CREATE TABLE IF NOT EXISTS movimientos (
 
 conn.commit()
 
-st.title("Finanzas del Hogar")
-
-# LOGIN
+# ESTADO LOGIN
 if "usuario_id" not in st.session_state:
     st.session_state.usuario_id = None
 
+# LOGIN / REGISTRO
 if st.session_state.usuario_id is None:
 
     menu = st.selectbox("Opciones", ["Login", "Registrarse"])
 
     if menu == "Registrarse":
+        st.subheader("Registro")
+
         usuario = st.text_input("Usuario")
         password = st.text_input("Contraseña", type="password")
 
@@ -60,6 +62,8 @@ if st.session_state.usuario_id is None:
                 st.error("Usuario ya existe")
 
     if menu == "Login":
+        st.subheader("Login")
+
         usuario = st.text_input("Usuario")
         password = st.text_input("Contraseña", type="password")
 
@@ -74,42 +78,94 @@ if st.session_state.usuario_id is None:
                 user_id, pw = result
                 if bcrypt.checkpw(password.encode(), pw):
                     st.session_state.usuario_id = user_id
+                    st.success("Login correcto")
                     st.rerun()
                 else:
                     st.error("Contraseña incorrecta")
             else:
                 st.error("Usuario no existe")
 
-# APP
+# APP PRINCIPAL
 else:
+
     usuario_id = st.session_state.usuario_id
 
     if st.button("Cerrar sesión"):
         st.session_state.usuario_id = None
         st.rerun()
 
-    df = pd.read_sql(
-        f"SELECT * FROM movimientos WHERE usuario_id={usuario_id}",
-        conn
-    )
+    # =========================
+    # CARGAR EXCEL
+    # =========================
+    st.subheader("Cargar datos desde Excel")
 
+    archivo = st.file_uploader("Sube tu archivo Excel", type=["xlsx"])
+
+    if archivo is not None:
+        try:
+            df_excel = pd.read_excel(archivo)
+            st.dataframe(df_excel.head())
+
+            if st.button("Importar datos"):
+                for _, row in df_excel.iterrows():
+                    cursor.execute(
+                        """INSERT INTO movimientos 
+                        (usuario_id, fecha, tipo, categoria, cuenta, forma_pago, descripcion, monto)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            usuario_id,
+                            str(row.get("fecha", "")),
+                            row.get("tipo", ""),
+                            row.get("categoria", ""),
+                            row.get("cuenta", "Principal"),
+                            row.get("forma_pago", "Efectivo"),
+                            row.get("descripcion", ""),
+                            float(row.get("monto", 0))
+                        )
+                    )
+                conn.commit()
+                st.success("Datos importados correctamente")
+                st.rerun()
+
+        except Exception as e:
+            st.error(f"Error al cargar Excel: {e}")
+
+    # =========================
+    # AGREGAR MOVIMIENTO
+    # =========================
     st.subheader("Agregar movimiento")
 
     tipo = st.selectbox("Tipo", ["Ingreso", "Gasto"])
     monto = st.number_input("Monto", min_value=0.0)
     categoria = st.text_input("Categoría")
+    cuenta = st.text_input("Cuenta", value="Principal")
+    forma_pago = st.text_input("Forma de pago", value="Efectivo")
+    descripcion = st.text_input("Descripción")
     fecha = st.date_input("Fecha")
 
-    if st.button("Guardar"):
+    if st.button("Guardar movimiento"):
         cursor.execute(
-            """INSERT INTO movimientos (usuario_id,fecha,tipo,categoria,monto)
-            VALUES (?,?,?,?,?)""",
-            (usuario_id, str(fecha), tipo, categoria, monto)
+            """INSERT INTO movimientos 
+            (usuario_id,fecha,tipo,categoria,cuenta,forma_pago,descripcion,monto)
+            VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                usuario_id,
+                str(fecha),
+                tipo,
+                categoria,
+                cuenta,
+                forma_pago,
+                descripcion,
+                monto
+            )
         )
         conn.commit()
-        st.success("Guardado")
+        st.success("Movimiento guardado")
         st.rerun()
 
+    # =========================
+    # HISTORIAL
+    # =========================
     st.subheader("Historial")
 
     df = pd.read_sql(
@@ -120,10 +176,12 @@ else:
     st.dataframe(df)
 
     if df.empty:
-        st.warning("No hay datos")
+        st.warning("No hay datos aún")
         st.stop()
 
+    # =========================
     # PROCESAMIENTO
+    # =========================
     df["fecha"] = pd.to_datetime(df["fecha"])
     df["mes"] = df["fecha"].dt.to_period("M")
 
@@ -138,10 +196,20 @@ else:
 
     resumen = resumen.sort_index()
 
+    # =========================
+    # DASHBOARD
+    # =========================
     st.subheader("Resumen mensual")
     st.dataframe(resumen)
 
+    st.subheader("Evolución del ahorro")
     st.line_chart(resumen["ahorro"])
 
+    # =========================
+    # GASTOS POR CATEGORIA
+    # =========================
+    st.subheader("Gastos por categoría")
 
+    gastos_categoria = df[df["tipo"] == "Gasto"].groupby("categoria")["monto"].sum()
 
+    st.bar_chart(gastos_categoria)
