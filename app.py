@@ -1,82 +1,110 @@
-import bcrypt
 import streamlit as st
 import pandas as pd
-import sqlite3
+import bcrypt
+import psycopg2
+import os
 
-st.title("Finanzas del Hogar")
+# ========================
+# CONEXIÓN SUPABASE
+# ========================
 
-# CONEXIÓN BD
-conn = sqlite3.connect("database.db", check_same_thread=False)
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+conn = psycopg2.connect(DATABASE_URL)
 cursor = conn.cursor()
 
-# TABLAS
+# ========================
+# CREAR TABLAS
+# ========================
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS usuarios (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     usuario TEXT UNIQUE,
-    password TEXT
+    password BYTEA
 )
 """)
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS movimientos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     usuario_id INTEGER,
-    fecha TEXT,
+    fecha DATE,
     tipo TEXT,
     categoria TEXT,
-    cuenta TEXT,
-    forma_pago TEXT,
-    descripcion TEXT,
     monto REAL
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS inversiones (
+    id SERIAL PRIMARY KEY,
+    usuario_id INTEGER,
+    nombre TEXT,
+    tipo TEXT,
+    monto REAL,
+    fecha DATE
 )
 """)
 
 conn.commit()
 
-# ESTADO LOGIN
+# ========================
+# UI
+# ========================
+
+st.title("Finanzas del Hogar")
+
+# ========================
+# LOGIN
+# ========================
+
 if "usuario_id" not in st.session_state:
     st.session_state.usuario_id = None
 
-# LOGIN / REGISTRO
 if st.session_state.usuario_id is None:
 
-    menu = st.selectbox("Opciones", ["Login", "Registrarse"])
+    opcion = st.selectbox("Opciones", ["Login", "Registrarse"])
 
-    if menu == "Registrarse":
-        st.subheader("Registro")
+    if opcion == "Registrarse":
+        st.subheader("Crear cuenta")
 
-        usuario = st.text_input("Usuario")
-        password = st.text_input("Contraseña", type="password")
+        user = st.text_input("Usuario")
+        pwd = st.text_input("Contraseña", type="password")
 
         if st.button("Registrar"):
             try:
-                hash_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+                hash_pwd = bcrypt.hashpw(pwd.encode(), bcrypt.gensalt())
+
                 cursor.execute(
-                    "INSERT INTO usuarios (usuario,password) VALUES (?,?)",
-                    (usuario, hash_pw)
+                    "INSERT INTO usuarios (usuario, password) VALUES (%s, %s)",
+                    (user, hash_pwd)
                 )
                 conn.commit()
                 st.success("Usuario creado")
+
             except:
                 st.error("Usuario ya existe")
 
-    if menu == "Login":
-        st.subheader("Login")
+    if opcion == "Login":
+        st.subheader("Iniciar sesión")
 
-        usuario = st.text_input("Usuario")
-        password = st.text_input("Contraseña", type="password")
+        user = st.text_input("Usuario")
+        pwd = st.text_input("Contraseña", type="password")
 
         if st.button("Entrar"):
-            cursor.execute(
-                "SELECT id,password FROM usuarios WHERE usuario=?",
-                (usuario,)
-            )
-            result = cursor.fetchone()
 
-            if result:
-                user_id, pw = result
-                if bcrypt.checkpw(password.encode(), pw):
+            cursor.execute(
+                "SELECT id, password FROM usuarios WHERE usuario=%s",
+                (user,)
+            )
+
+            res = cursor.fetchone()
+
+            if res:
+                user_id, pwd_db = res
+
+                if bcrypt.checkpw(pwd.encode(), pwd_db):
                     st.session_state.usuario_id = user_id
                     st.success("Login correcto")
                     st.rerun()
@@ -85,7 +113,10 @@ if st.session_state.usuario_id is None:
             else:
                 st.error("Usuario no existe")
 
+# ========================
 # APP PRINCIPAL
+# ========================
+
 else:
 
     usuario_id = st.session_state.usuario_id
@@ -94,122 +125,142 @@ else:
         st.session_state.usuario_id = None
         st.rerun()
 
-    # =========================
-    # CARGAR EXCEL
-    # =========================
-    st.subheader("Cargar datos desde Excel")
-
-    archivo = st.file_uploader("Sube tu archivo Excel", type=["xlsx"])
-
-    if archivo is not None:
-        try:
-            df_excel = pd.read_excel(archivo)
-            st.dataframe(df_excel.head())
-
-            if st.button("Importar datos"):
-                for _, row in df_excel.iterrows():
-                    cursor.execute(
-                        """INSERT INTO movimientos 
-                        (usuario_id, fecha, tipo, categoria, cuenta, forma_pago, descripcion, monto)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            usuario_id,
-                            str(row.get("fecha", "")),
-                            row.get("tipo", ""),
-                            row.get("categoria", ""),
-                            row.get("cuenta", "Principal"),
-                            row.get("forma_pago", "Efectivo"),
-                            row.get("descripcion", ""),
-                            float(row.get("monto", 0))
-                        )
-                    )
-                conn.commit()
-                st.success("Datos importados correctamente")
-                st.rerun()
-
-        except Exception as e:
-            st.error(f"Error al cargar Excel: {e}")
-
-    # =========================
-    # AGREGAR MOVIMIENTO
-    # =========================
-    st.subheader("Agregar movimiento")
-
-    tipo = st.selectbox("Tipo", ["Ingreso", "Gasto"])
-    monto = st.number_input("Monto", min_value=0.0)
-    categoria = st.text_input("Categoría")
-    cuenta = st.text_input("Cuenta", value="Principal")
-    forma_pago = st.text_input("Forma de pago", value="Efectivo")
-    descripcion = st.text_input("Descripción")
-    fecha = st.date_input("Fecha")
-
-    if st.button("Guardar movimiento"):
-        cursor.execute(
-            """INSERT INTO movimientos 
-            (usuario_id,fecha,tipo,categoria,cuenta,forma_pago,descripcion,monto)
-            VALUES (?,?,?,?,?,?,?,?)""",
-            (
-                usuario_id,
-                str(fecha),
-                tipo,
-                categoria,
-                cuenta,
-                forma_pago,
-                descripcion,
-                monto
-            )
-        )
-        conn.commit()
-        st.success("Movimiento guardado")
-        st.rerun()
-
-    # =========================
-    # HISTORIAL
-    # =========================
-    st.subheader("Historial")
+    # ========================
+    # CARGAR DATOS
+    # ========================
 
     df = pd.read_sql(
         f"SELECT * FROM movimientos WHERE usuario_id={usuario_id}",
         conn
     )
 
+    df_inv = pd.read_sql(
+        f"SELECT * FROM inversiones WHERE usuario_id={usuario_id}",
+        conn
+    )
+
+    # ========================
+    # RESUMEN GENERAL
+    # ========================
+
+    ingresos = df[df["tipo"] == "Ingreso"]["monto"].sum() if not df.empty else 0
+    gastos = df[df["tipo"] == "Gasto"]["monto"].sum() if not df.empty else 0
+    ahorro = ingresos - gastos
+    inversiones = df_inv["monto"].sum() if not df_inv.empty else 0
+
+    st.subheader("Resumen financiero")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Ingresos", ingresos)
+    c2.metric("Gastos", gastos)
+    c3.metric("Ahorro", ahorro)
+    c4.metric("Inversiones", inversiones)
+
+    st.metric("Patrimonio total", ahorro + inversiones)
+
+    # ========================
+    # AGREGAR MOVIMIENTO
+    # ========================
+
+    st.subheader("Agregar movimiento")
+
+    tipo = st.selectbox("Tipo", ["Ingreso", "Gasto"])
+    monto = st.number_input("Monto", min_value=0.0)
+    categoria = st.text_input("Categoría")
+    fecha = st.date_input("Fecha")
+
+    if st.button("Guardar movimiento"):
+
+        cursor.execute("""
+        INSERT INTO movimientos (usuario_id, fecha, tipo, categoria, monto)
+        VALUES (%s, %s, %s, %s, %s)
+        """, (usuario_id, fecha, tipo, categoria, monto))
+
+        conn.commit()
+        st.success("Guardado")
+        st.rerun()
+
+    # ========================
+    # HISTORIAL
+    # ========================
+
+    st.subheader("Historial")
+
+    df = pd.read_sql(
+        f"SELECT * FROM movimientos WHERE usuario_id={usuario_id} ORDER BY fecha",
+        conn
+    )
+
     st.dataframe(df)
 
     if df.empty:
-        st.warning("No hay datos aún")
+        st.warning("No hay datos")
         st.stop()
 
-    # =========================
-    # PROCESAMIENTO
-    # =========================
+    # ========================
+    # RESUMEN MENSUAL (CORREGIDO)
+    # ========================
+
     df["fecha"] = pd.to_datetime(df["fecha"])
     df["mes"] = df["fecha"].dt.to_period("M")
 
-    resumen = df.groupby(["mes","tipo"])["monto"].sum().unstack().fillna(0)
+    resumen = df.groupby(["mes", "tipo"])["monto"].sum().unstack().fillna(0)
 
-    if "Ingreso" not in resumen.columns:
+    if "Ingreso" not in resumen:
         resumen["Ingreso"] = 0
-    if "Gasto" not in resumen.columns:
+
+    if "Gasto" not in resumen:
         resumen["Gasto"] = 0
 
     resumen["ahorro"] = resumen["Ingreso"] - resumen["Gasto"]
 
     resumen = resumen.sort_index()
 
-    # =========================
-    # DASHBOARD
-    # =========================
     st.subheader("Resumen mensual")
     st.dataframe(resumen)
+
+    # ========================
+    # GRAFICOS
+    # ========================
 
     st.subheader("Evolución del ahorro")
     st.line_chart(resumen["ahorro"])
 
-    # =========================
-    # GASTOS POR CATEGORIA
-    # =========================
     st.subheader("Gastos por categoría")
 
-    gastos_categoria = df[df["tipo"] == "Gasto"].groupby("categoria")["monto"].sum()
+    gastos_cat = df[df["tipo"] == "Gasto"].groupby("categoria")["monto"].sum()
 
-    st.bar_chart(gastos_categoria)
+    if not gastos_cat.empty:
+        st.bar_chart(gastos_cat)
+    else:
+        st.info("Sin gastos aún")
+
+    # ========================
+    # INVERSIONES
+    # ========================
+
+    st.subheader("Agregar inversión")
+
+    nombre = st.text_input("Nombre")
+    tipo_inv = st.selectbox("Tipo", ["Acción", "ETF", "Cripto", "Otro"])
+    monto_inv = st.number_input("Monto inversión", min_value=0.0)
+
+    if st.button("Guardar inversión"):
+
+        cursor.execute("""
+        INSERT INTO inversiones (usuario_id, nombre, tipo, monto, fecha)
+        VALUES (%s, %s, %s, %s, CURRENT_DATE)
+        """, (usuario_id, nombre, tipo_inv, monto_inv))
+
+        conn.commit()
+        st.success("Inversión guardada")
+        st.rerun()
+
+    st.subheader("Inversiones")
+
+    df_inv = pd.read_sql(
+        f"SELECT * FROM inversiones WHERE usuario_id={usuario_id}",
+        conn
+    )
+
+    st.dataframe(df_inv)
