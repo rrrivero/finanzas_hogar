@@ -4,6 +4,15 @@ import bcrypt
 import psycopg2
 import os
 
+try:
+    conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+    
+    st.success("Conectado a Supabase")
+    
+except Exception as e:
+    st.error(f"Error conexion: {e}")
+    st.stop()
+
 # ========================
 # CONEXIÓN SUPABASE
 # ========================
