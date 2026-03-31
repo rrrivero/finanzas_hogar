@@ -8,7 +8,7 @@ import os
 # CONEXIÓN SUPABASE
 # ========================
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = "postgresql://postgres:TU_PASSWORD@db.xxxxx.supabase.co:5432/postgres"
 
 conn = psycopg2.connect(DATABASE_URL)
 cursor = conn.cursor()
