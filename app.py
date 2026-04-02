@@ -10,8 +10,14 @@ import bcrypt
 # =========================
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = st.secrets["DATABASE_URL"]
 
+try:
+    conn = psycopg2.connect(DATABASE_URL)
+    st.success("✅ Conectado correctamente")
+except Exception as e:
+    st.error(f"❌ Error: {e}")
+    
 # =========================
 # CONEXION DB
 # =========================
