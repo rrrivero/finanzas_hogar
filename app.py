@@ -10,13 +10,17 @@ import bcrypt
 # =========================
 load_dotenv()
 
-DATABASE_URL = st.secrets["DATABASE_URL"]
+import streamlit as st
+import os
 
 try:
-    conn = psycopg2.connect(DATABASE_URL)
-    st.success("✅ Conectado correctamente")
-except Exception as e:
-    st.error(f"❌ Error: {e}")
+    DATABASE_URL = st.secrets["DATABASE_URL"]  # nube
+except:
+    DATABASE_URL = os.getenv("DATABASE_URL")   # local
+
+if not DATABASE_URL:
+    st.error("❌ DATABASE_URL no configurada")
+    st.stop()
     
 # =========================
 # CONEXION DB
