@@ -1,30 +1,21 @@
 import streamlit as st
 import pandas as pd
 import psycopg2
-import os
-from dotenv import load_dotenv
 import bcrypt
-
-# =========================
-# CONFIG
-# =========================
-load_dotenv()
-
-import streamlit as st
 import os
 
+# =========================
+# CONEXION (LOCAL + CLOUD)
+# =========================
 try:
-    DATABASE_URL = st.secrets["DATABASE_URL"]  # nube
+    DATABASE_URL = st.secrets["DATABASE_URL"]  # Streamlit Cloud
 except:
-    DATABASE_URL = os.getenv("DATABASE_URL")   # local
+    DATABASE_URL = os.getenv("DATABASE_URL")   # Local
 
 if not DATABASE_URL:
     st.error("❌ DATABASE_URL no configurada")
     st.stop()
-    
-# =========================
-# CONEXION DB
-# =========================
+
 @st.cache_resource
 def conectar():
     return psycopg2.connect(DATABASE_URL)
@@ -61,7 +52,6 @@ conn.commit()
 # =========================
 st.title("💰 Finanzas del Hogar")
 
-# SESSION
 if "usuario_id" not in st.session_state:
     st.session_state.usuario_id = None
 
@@ -72,6 +62,7 @@ if st.session_state.usuario_id is None:
 
     menu = st.selectbox("Opciones", ["Login", "Registrarse"])
 
+    # REGISTRO
     if menu == "Registrarse":
 
         st.subheader("Crear cuenta")
@@ -86,7 +77,7 @@ if st.session_state.usuario_id is None:
                 hash_password = bcrypt.hashpw(
                     nueva_password.encode("utf-8"),
                     bcrypt.gensalt()
-                )
+                ).decode("utf-8")  # 👈 IMPORTANTE (guardar como texto)
 
                 try:
                     cursor.execute(
@@ -98,6 +89,7 @@ if st.session_state.usuario_id is None:
                 except:
                     st.error("Ese usuario ya existe")
 
+    # LOGIN
     if menu == "Login":
 
         st.subheader("Iniciar sesión")
@@ -118,12 +110,16 @@ if st.session_state.usuario_id is None:
 
                 user_id, password_guardado = resultado
 
-                if bcrypt.checkpw(password.encode("utf-8"), password_guardado):
+                if bcrypt.checkpw(
+                    password.encode("utf-8"),
+                    password_guardado.encode("utf-8")  # 👈 SOLUCION ERROR
+                ):
                     st.session_state.usuario_id = user_id
                     st.success("Login correcto")
                     st.rerun()
                 else:
                     st.error("Contraseña incorrecta")
+
             else:
                 st.error("Usuario no existe")
 
