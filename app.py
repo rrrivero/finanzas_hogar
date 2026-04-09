@@ -3,19 +3,36 @@ import pandas as pd
 import psycopg2
 import bcrypt
 import os
+from dotenv import load_dotenv
+
+# =========================
+# CARGAR .env (LOCAL)
+# =========================
+load_dotenv()
 
 # =========================
 # CONEXION (LOCAL + CLOUD)
 # =========================
-try:
-    DATABASE_URL = st.secrets["DATABASE_URL"]  # Streamlit Cloud
-except:
-    DATABASE_URL = os.getenv("DATABASE_URL")   # Local
+DATABASE_URL = None
 
+# Intentar primero Streamlit Cloud
+try:
+    DATABASE_URL = st.secrets["DATABASE_URL"]
+except:
+    pass
+
+# Si no existe, usar .env (local)
+if not DATABASE_URL:
+    DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Validación
 if not DATABASE_URL:
     st.error("❌ DATABASE_URL no configurada")
     st.stop()
 
+# =========================
+# CONEXION DB
+# =========================
 @st.cache_resource
 def conectar():
     return psycopg2.connect(DATABASE_URL)
@@ -62,7 +79,9 @@ if st.session_state.usuario_id is None:
 
     menu = st.selectbox("Opciones", ["Login", "Registrarse"])
 
+    # =========================
     # REGISTRO
+    # =========================
     if menu == "Registrarse":
 
         st.subheader("Crear cuenta")
@@ -77,7 +96,7 @@ if st.session_state.usuario_id is None:
                 hash_password = bcrypt.hashpw(
                     nueva_password.encode("utf-8"),
                     bcrypt.gensalt()
-                ).decode("utf-8")  # 👈 IMPORTANTE (guardar como texto)
+                ).decode("utf-8")  # guardar como texto
 
                 try:
                     cursor.execute(
@@ -89,7 +108,9 @@ if st.session_state.usuario_id is None:
                 except:
                     st.error("Ese usuario ya existe")
 
+    # =========================
     # LOGIN
+    # =========================
     if menu == "Login":
 
         st.subheader("Iniciar sesión")
@@ -112,7 +133,7 @@ if st.session_state.usuario_id is None:
 
                 if bcrypt.checkpw(
                     password.encode("utf-8"),
-                    password_guardado.encode("utf-8")  # 👈 SOLUCION ERROR
+                    password_guardado.encode("utf-8")
                 ):
                     st.session_state.usuario_id = user_id
                     st.success("Login correcto")
