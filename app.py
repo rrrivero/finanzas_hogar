@@ -137,15 +137,25 @@ if st.session_state.usuario_id is None:
 
                 user_id, password_guardado = resultado
 
-                if bcrypt.checkpw(
-                    password.encode("utf-8"),
-                    password_guardado.encode("utf-8")
-                ):
-                    st.session_state.usuario_id = user_id
-                    st.success("Login correcto")
-                    st.rerun()
+                # 🔒 VALIDACIÓN ANTI ERROR BCRYPT
+                if password_guardado and password_guardado.startswith("$2b$"):
+
+                    try:
+                        if bcrypt.checkpw(
+                            password.encode("utf-8"),
+                            password_guardado.encode("utf-8")
+                        ):
+                            st.session_state.usuario_id = user_id
+                            st.success("Login correcto")
+                            st.rerun()
+                        else:
+                            st.error("Contraseña incorrecta")
+
+                    except ValueError:
+                        st.error("⚠️ Error en el formato de la contraseña")
+
                 else:
-                    st.error("Contraseña incorrecta")
+                    st.error("⚠️ Usuario con contraseña inválida. Regístralo nuevamente.")
 
             else:
                 st.error("Usuario no existe")
