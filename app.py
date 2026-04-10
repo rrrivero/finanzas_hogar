@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 
 # =========================
-# CARGAR .env (LOCAL)
+# CARGAR .env
 # =========================
 load_dotenv()
 
@@ -15,17 +15,14 @@ load_dotenv()
 # =========================
 DATABASE_URL = None
 
-# Intentar primero Streamlit Cloud
 try:
     DATABASE_URL = st.secrets["DATABASE_URL"]
 except:
     pass
 
-# Si no existe, usar .env (local)
 if not DATABASE_URL:
     DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Validación
 if not DATABASE_URL:
     st.error("❌ DATABASE_URL no configurada")
     st.stop()
@@ -35,14 +32,20 @@ if not DATABASE_URL:
 # =========================
 @st.cache_resource
 def conectar():
-    return psycopg2.connect(DATABASE_URL)
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = True
+    return conn
 
 conn = conectar()
-cursor = conn.cursor()
+
+def get_cursor():
+    return conn.cursor()
 
 # =========================
 # CREAR TABLAS
 # =========================
+cursor = get_cursor()
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS usuarios (
     id SERIAL PRIMARY KEY,
@@ -58,11 +61,9 @@ CREATE TABLE IF NOT EXISTS movimientos (
     fecha DATE,
     tipo TEXT,
     categoria TEXT,
-    monto REAL
+    monto NUMERIC(10,2)
 )
 """)
-
-conn.commit()
 
 # =========================
 # UI
@@ -91,22 +92,26 @@ if st.session_state.usuario_id is None:
 
         if st.button("Registrar"):
 
-            if nuevo_usuario and nueva_password:
+            if nuevo_usuario.strip() and nueva_password.strip():
 
                 hash_password = bcrypt.hashpw(
                     nueva_password.encode("utf-8"),
                     bcrypt.gensalt()
-                ).decode("utf-8")  # guardar como texto
+                ).decode("utf-8")
 
                 try:
+                    cursor = get_cursor()
                     cursor.execute(
                         "INSERT INTO usuarios (usuario,password) VALUES (%s,%s)",
                         (nuevo_usuario, hash_password)
                     )
-                    conn.commit()
                     st.success("Usuario creado")
-                except:
-                    st.error("Ese usuario ya existe")
+
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+            else:
+                st.warning("Completa todos los campos")
 
     # =========================
     # LOGIN
@@ -120,6 +125,7 @@ if st.session_state.usuario_id is None:
 
         if st.button("Entrar"):
 
+            cursor = get_cursor()
             cursor.execute(
                 "SELECT id,password FROM usuarios WHERE usuario=%s",
                 (usuario,)
@@ -179,11 +185,12 @@ else:
         col2.metric("Gastos", gastos)
         col3.metric("Ahorro", ahorro)
 
-        st.bar_chart({
-            "Ingresos": ingresos,
-            "Gastos": gastos,
-            "Ahorro": ahorro
-        })
+        df_resumen = pd.DataFrame({
+            "Tipo": ["Ingresos", "Gastos", "Ahorro"],
+            "Monto": [ingresos, gastos, ahorro]
+        }).set_index("Tipo")
+
+        st.bar_chart(df_resumen)
 
     # =========================
     # AGREGAR MOVIMIENTO
@@ -197,20 +204,26 @@ else:
 
     if st.button("Guardar movimiento"):
 
-        cursor.execute("""
-        INSERT INTO movimientos (usuario_id, fecha, tipo, categoria, monto)
-        VALUES (%s, %s, %s, %s, %s)
-        """, (
-            usuario_id,
-            fecha,
-            tipo,
-            categoria,
-            monto
-        ))
+        if categoria.strip():
 
-        conn.commit()
-        st.success("Guardado")
-        st.rerun()
+            cursor = get_cursor()
+
+            cursor.execute("""
+            INSERT INTO movimientos (usuario_id, fecha, tipo, categoria, monto)
+            VALUES (%s, %s, %s, %s, %s)
+            """, (
+                usuario_id,
+                str(fecha),
+                tipo,
+                categoria,
+                monto
+            ))
+
+            st.success("Guardado")
+            st.rerun()
+
+        else:
+            st.warning("La categoría no puede estar vacía")
 
     # =========================
     # HISTORIAL
