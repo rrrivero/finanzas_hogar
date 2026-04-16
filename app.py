@@ -1,18 +1,25 @@
 import streamlit as st
 import pandas as pd
 import psycopg2
+from psycopg2 import pool
 import bcrypt
 import os
 from dotenv import load_dotenv
 
 # =========================
-# CARGAR .env
+# CONFIG UI
+# =========================
+st.set_page_config(
+    page_title="Finanzas del Hogar",
+    page_icon="💰",
+    layout="wide"
+)
+
+# =========================
+# CARGAR ENV
 # =========================
 load_dotenv()
 
-# =========================
-# CONEXION (LOCAL + CLOUD)
-# =========================
 DATABASE_URL = None
 
 try:
@@ -28,25 +35,51 @@ if not DATABASE_URL:
     st.stop()
 
 # =========================
-# CONEXION DB
+# POOL DE CONEXIONES
 # =========================
 @st.cache_resource
-def conectar():
-    conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = True
-    return conn
+def get_pool():
+    return psycopg2.pool.SimpleConnectionPool(
+        minconn=1,
+        maxconn=5,
+        dsn=DATABASE_URL
+    )
 
-conn = conectar()
+pool_conn = get_pool()
 
-def get_cursor():
-    return conn.cursor()
+# =========================
+# FUNCION DB SEGURA
+# =========================
+def run_query(query, params=None, fetch=False):
+    conn = None
+    try:
+        conn = pool_conn.getconn()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+
+        if fetch:
+            result = cursor.fetchall()
+        else:
+            result = None
+
+        conn.commit()
+        cursor.close()
+        return result
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        st.error(f"Error DB: {e}")
+        return None
+
+    finally:
+        if conn:
+            pool_conn.putconn(conn)
 
 # =========================
 # CREAR TABLAS
 # =========================
-cursor = get_cursor()
-
-cursor.execute("""
+run_query("""
 CREATE TABLE IF NOT EXISTS usuarios (
     id SERIAL PRIMARY KEY,
     usuario TEXT UNIQUE,
@@ -54,7 +87,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
 )
 """)
 
-cursor.execute("""
+run_query("""
 CREATE TABLE IF NOT EXISTS movimientos (
     id SERIAL PRIMARY KEY,
     usuario_id INTEGER,
@@ -66,10 +99,8 @@ CREATE TABLE IF NOT EXISTS movimientos (
 """)
 
 # =========================
-# UI
+# SESSION
 # =========================
-st.title("💰 Finanzas del Hogar")
-
 if "usuario_id" not in st.session_state:
     st.session_state.usuario_id = None
 
@@ -78,44 +109,36 @@ if "usuario_id" not in st.session_state:
 # =========================
 if st.session_state.usuario_id is None:
 
+    st.title("💰 Finanzas del Hogar")
+
     menu = st.selectbox("Opciones", ["Login", "Registrarse"])
 
-    # =========================
-    # REGISTRO
-    # =========================
     if menu == "Registrarse":
 
         st.subheader("Crear cuenta")
 
-        nuevo_usuario = st.text_input("Usuario")
-        nueva_password = st.text_input("Contraseña", type="password")
+        usuario = st.text_input("Usuario")
+        password = st.text_input("Contraseña", type="password")
 
         if st.button("Registrar"):
 
-            if nuevo_usuario.strip() and nueva_password.strip():
+            if usuario.strip() and password.strip():
 
-                hash_password = bcrypt.hashpw(
-                    nueva_password.encode("utf-8"),
+                hash_pass = bcrypt.hashpw(
+                    password.encode(),
                     bcrypt.gensalt()
-                ).decode("utf-8")
+                ).decode()
 
-                try:
-                    cursor = get_cursor()
-                    cursor.execute(
-                        "INSERT INTO usuarios (usuario,password) VALUES (%s,%s)",
-                        (nuevo_usuario, hash_password)
-                    )
-                    st.success("Usuario creado")
+                run_query(
+                    "INSERT INTO usuarios (usuario,password) VALUES (%s,%s)",
+                    (usuario, hash_pass)
+                )
 
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                st.success("Usuario creado")
 
             else:
                 st.warning("Completa todos los campos")
 
-    # =========================
-    # LOGIN
-    # =========================
     if menu == "Login":
 
         st.subheader("Iniciar sesión")
@@ -125,37 +148,28 @@ if st.session_state.usuario_id is None:
 
         if st.button("Entrar"):
 
-            cursor = get_cursor()
-            cursor.execute(
+            data = run_query(
                 "SELECT id,password FROM usuarios WHERE usuario=%s",
-                (usuario,)
+                (usuario,),
+                fetch=True
             )
 
-            resultado = cursor.fetchone()
+            if data:
 
-            if resultado:
+                user_id, pass_db = data[0]
 
-                user_id, password_guardado = resultado
-
-                # 🔒 VALIDACIÓN ANTI ERROR BCRYPT
-                if password_guardado and password_guardado.startswith("$2b$"):
-
+                if pass_db and pass_db.startswith("$2b$"):
                     try:
-                        if bcrypt.checkpw(
-                            password.encode("utf-8"),
-                            password_guardado.encode("utf-8")
-                        ):
+                        if bcrypt.checkpw(password.encode(), pass_db.encode()):
                             st.session_state.usuario_id = user_id
                             st.success("Login correcto")
                             st.rerun()
                         else:
                             st.error("Contraseña incorrecta")
-
-                    except ValueError:
-                        st.error("⚠️ Error en el formato de la contraseña")
-
+                    except:
+                        st.error("Error en contraseña")
                 else:
-                    st.error("⚠️ Usuario con contraseña inválida. Regístralo nuevamente.")
+                    st.error("Usuario inválido. Regístralo nuevamente")
 
             else:
                 st.error("Usuario no existe")
@@ -167,60 +181,75 @@ else:
 
     usuario_id = st.session_state.usuario_id
 
-    if st.button("Cerrar sesión"):
+    # SIDEBAR
+    st.sidebar.title("📌 Menú")
+    menu = st.sidebar.selectbox(
+        "Ir a",
+        ["Dashboard", "Agregar", "Historial"]
+    )
+
+    st.sidebar.write(f"👤 Usuario: {usuario_id}")
+
+    if st.sidebar.button("Cerrar sesión"):
         st.session_state.usuario_id = None
         st.rerun()
 
-    # =========================
     # CARGAR DATOS
-    # =========================
-    df = pd.read_sql(
+    data = run_query(
         "SELECT * FROM movimientos WHERE usuario_id=%s",
-        conn,
-        params=(usuario_id,)
+        (usuario_id,),
+        fetch=True
     )
 
-    st.subheader("📊 Resumen")
-
-    if df.empty:
-        st.warning("No hay datos aún")
-    else:
-
-        ingresos = df[df["tipo"] == "Ingreso"]["monto"].sum()
-        gastos = df[df["tipo"] == "Gasto"]["monto"].sum()
-        ahorro = ingresos - gastos
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Ingresos", ingresos)
-        col2.metric("Gastos", gastos)
-        col3.metric("Ahorro", ahorro)
-
-        df_resumen = pd.DataFrame({
-            "Tipo": ["Ingresos", "Gastos", "Ahorro"],
-            "Monto": [ingresos, gastos, ahorro]
-        }).set_index("Tipo")
-
-        st.bar_chart(df_resumen)
+    df = pd.DataFrame(data, columns=[
+        "id", "usuario_id", "fecha", "tipo", "categoria", "monto"
+    ]) if data else pd.DataFrame()
 
     # =========================
-    # AGREGAR MOVIMIENTO
+    # DASHBOARD
     # =========================
-    st.subheader("➕ Agregar movimiento")
+    if menu == "Dashboard":
 
-    tipo = st.selectbox("Tipo", ["Ingreso", "Gasto"])
-    monto = st.number_input("Monto", min_value=0.0)
-    categoria = st.text_input("Categoría")
-    fecha = st.date_input("Fecha")
+        st.title("📊 Dashboard")
 
-    if st.button("Guardar movimiento"):
+        if df.empty:
+            st.warning("No hay datos aún")
+        else:
 
-        if categoria.strip():
+            ingresos = df[df["tipo"] == "Ingreso"]["monto"].sum()
+            gastos = df[df["tipo"] == "Gasto"]["monto"].sum()
+            ahorro = ingresos - gastos
 
-            cursor = get_cursor()
+            col1, col2, col3 = st.columns(3)
+            col1.metric("💰 Ingresos", ingresos)
+            col2.metric("💸 Gastos", gastos)
+            col3.metric("📈 Ahorro", ahorro)
 
-            cursor.execute("""
-            INSERT INTO movimientos (usuario_id, fecha, tipo, categoria, monto)
-            VALUES (%s, %s, %s, %s, %s)
+            st.subheader("📈 Evolución")
+            df["fecha"] = pd.to_datetime(df["fecha"])
+            evolucion = df.groupby("fecha")["monto"].sum()
+            st.line_chart(evolucion)
+
+    # =========================
+    # AGREGAR
+    # =========================
+    elif menu == "Agregar":
+
+        st.title("➕ Nuevo movimiento")
+
+        tipo = st.selectbox("Tipo", ["Ingreso", "Gasto"])
+        monto = st.number_input("Monto", min_value=0.0)
+        categoria = st.selectbox(
+            "Categoría",
+            ["Comida", "Transporte", "Casa", "Ocio", "Otros"]
+        )
+        fecha = st.date_input("Fecha")
+
+        if st.button("Guardar"):
+
+            run_query("""
+                INSERT INTO movimientos (usuario_id, fecha, tipo, categoria, monto)
+                VALUES (%s, %s, %s, %s, %s)
             """, (
                 usuario_id,
                 str(fecha),
@@ -229,44 +258,23 @@ else:
                 monto
             ))
 
-            st.success("Guardado")
+            st.success("Movimiento guardado")
             st.rerun()
-
-        else:
-            st.warning("La categoría no puede estar vacía")
 
     # =========================
     # HISTORIAL
     # =========================
-    st.subheader("📜 Historial")
+    elif menu == "Historial":
 
-    df = pd.read_sql(
-        "SELECT * FROM movimientos WHERE usuario_id=%s ORDER BY fecha DESC",
-        conn,
-        params=(usuario_id,)
-    )
+        st.title("📜 Historial")
 
-    st.dataframe(df)
+        st.dataframe(df)
 
-    # =========================
-    # RESUMEN MENSUAL
-    # =========================
-    if not df.empty:
+        if not df.empty:
+            st.subheader("📊 Gastos por categoría")
 
-        df["fecha"] = pd.to_datetime(df["fecha"])
-        df["mes"] = df["fecha"].dt.to_period("M")
+            gastos = df[df["tipo"] == "Gasto"]
 
-        resumen = df.groupby(["mes", "tipo"])["monto"].sum().unstack().fillna(0)
-
-        if "Ingreso" not in resumen.columns:
-            resumen["Ingreso"] = 0
-        if "Gasto" not in resumen.columns:
-            resumen["Gasto"] = 0
-
-        resumen["ahorro"] = resumen["Ingreso"] - resumen["Gasto"]
-
-        st.subheader("📅 Resumen mensual")
-        st.dataframe(resumen)
-
-        st.subheader("📈 Evolución del ahorro")
-        st.line_chart(resumen["ahorro"])
+            if not gastos.empty:
+                grafico = gastos.groupby("categoria")["monto"].sum()
+                st.bar_chart(grafico)
