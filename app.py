@@ -14,14 +14,13 @@ from dotenv import load_dotenv
 st.set_page_config(page_title="Finanzas", layout="wide")
 
 # =========================
-# CARGAR ENV
+# ENV (local + cloud)
 # =========================
 load_dotenv()
 
-# ✅ SOLUCIÓN ERROR SECRETS
 try:
     DATABASE_URL = st.secrets["DATABASE_URL"]
-except:
+except Exception:
     DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
@@ -29,17 +28,27 @@ if not DATABASE_URL:
     st.stop()
 
 # =========================
-# POOL DB
+# POOL DB (robusto)
 # =========================
 @st.cache_resource
 def get_pool():
-    return psycopg2.pool.SimpleConnectionPool(1, 5, dsn=DATABASE_URL)
+    return psycopg2.pool.SimpleConnectionPool(
+        minconn=1,
+        maxconn=5,
+        dsn=DATABASE_URL
+    )
 
 pool_conn = get_pool()
 
 def run_query(query, params=None, fetch=False):
-    conn = pool_conn.getconn()
+    conn = None
     try:
+        conn = pool_conn.getconn()
+
+        # 🔒 si la conexión viene cerrada, pedir otra
+        if conn.closed != 0:
+            conn = pool_conn.getconn()
+
         cur = conn.cursor()
         cur.execute(query, params)
 
@@ -53,11 +62,22 @@ def run_query(query, params=None, fetch=False):
         return data
 
     except Exception as e:
-        conn.rollback()
+        # 🔒 rollback seguro (solo si está abierta)
+        if conn and conn.closed == 0:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
         st.error(f"Error DB: {e}")
+        return None
 
     finally:
-        pool_conn.putconn(conn)
+        if conn:
+            try:
+                pool_conn.putconn(conn)
+            except Exception:
+                pass
 
 # =========================
 # TABLAS
@@ -106,7 +126,7 @@ if "usuario_id" not in st.session_state:
     st.session_state.usuario_id = None
 
 # =========================
-# LOGIN
+# LOGIN / REGISTRO
 # =========================
 if not st.session_state.usuario_id:
 
@@ -123,11 +143,10 @@ if not st.session_state.usuario_id:
 
         if data:
             uid, pw = data[0]
-
-            if pw and pw.startswith("$2b$"):
-                if bcrypt.checkpw(password.encode(), pw.encode()):
-                    st.session_state.usuario_id = uid
-                    st.rerun()
+            if pw and pw.startswith("$2b$") and bcrypt.checkpw(password.encode(), pw.encode()):
+                st.session_state.usuario_id = uid
+                st.success("Login correcto")
+                st.rerun()
 
         st.error("Credenciales incorrectas")
 
@@ -136,12 +155,10 @@ if not st.session_state.usuario_id:
     if st.button("Crear usuario"):
         if usuario and password:
             hashp = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
             run_query(
                 "INSERT INTO usuarios (usuario,password) VALUES (%s,%s)",
                 (usuario, hashp)
             )
-
             st.success("Usuario creado")
 
 # =========================
@@ -190,10 +207,10 @@ else:
             ingresos = df[df.tipo=="Ingreso"].monto.sum()
             gastos = df[df.tipo=="Gasto"].monto.sum()
 
-            col1,col2,col3 = st.columns(3)
-            col1.metric("Ingresos", ingresos)
-            col2.metric("Gastos", gastos)
-            col3.metric("Ahorro", ingresos-gastos)
+            c1,c2,c3 = st.columns(3)
+            c1.metric("Ingresos", ingresos)
+            c2.metric("Gastos", gastos)
+            c3.metric("Ahorro", ingresos-gastos)
 
             # 🔮 Predicción global
             hoy = pd.Timestamp.today()
@@ -204,13 +221,12 @@ else:
 
             gasto_actual = gastos_mes.monto.sum()
             dias_mes = calendar.monthrange(hoy.year,hoy.month)[1]
-
             estimado = (gasto_actual/hoy.day)*dias_mes if hoy.day>0 else 0
 
             st.subheader("🔮 Predicción mensual")
             st.metric("Estimado fin de mes", round(estimado,2))
 
-            # 🔮 por categoría
+            # 🔮 Predicción por categoría
             st.subheader("📊 Predicción por categoría")
 
             gasto_cat = gastos_mes.groupby("categoria")["monto"].sum()
@@ -296,7 +312,7 @@ else:
             )
 
     # =========================
-    # CATEGORIAS
+    # CATEGORÍAS
     # =========================
     elif menu == "Categorías":
 
