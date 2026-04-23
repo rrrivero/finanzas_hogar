@@ -4,5 +4,5 @@ psycopg2-binary==2.9.9
 python-dotenv==1.0.1
 bcrypt==4.1.2
 openpyxl==3.1.2
-xlswriter==3.2.0
+xlsxwriter==3.2.0
 
