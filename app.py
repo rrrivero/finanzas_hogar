@@ -13,18 +13,18 @@ from dotenv import load_dotenv
 # CONFIG
 # =========================
 st.set_page_config(page_title="Finanzas Pro", layout="wide")
-
 load_dotenv()
 
 # =========================
 # DATABASE URL (FIX FINAL)
 # =========================
-DATABASE_URL = None
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-try:
-    DATABASE_URL = st.secrets["DATABASE_URL"]
-except Exception:
-    DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    try:
+        DATABASE_URL = st.secrets["DATABASE_URL"]
+    except Exception:
+        pass
 
 if not DATABASE_URL:
     st.error("❌ DATABASE_URL no configurada")
