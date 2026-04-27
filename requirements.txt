@@ -1,8 +1,8 @@
 streamlit==1.33.0
 pandas==2.2.2
-psycopg2-binary==2.9.9
-python-dotenv==1.0.1
-bcrypt==4.1.2
-openpyxl==3.1.2
-xlsxwriter==3.2.0
+psycopg[binary]
+psycopg_pool
+bcrypt
+python-dotenv
+xlsxwriter
 
